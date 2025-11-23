@@ -503,16 +503,19 @@ class Client:
         data = self._normalize_data(data, **kwargs)
         return self._post("/api/licenses/credits/reduce", data)
 
-    def get_product_updates(self, product: str = None, product_id: str = None, key: str = None) -> Dict[str, Any]:
+    def get_product_updates(self, data: Optional[Dict[str, Any]] = None, product: str = None, product_id: str = None, key: str = None, **kwargs) -> Dict[str, Any]:
         """
         Get the latest product update information.
         Requires Client Token or Admin Token.
 
         Args:
+            data: Optional dictionary of data, or use keyword arguments
             product: Product UUID or slug (optional if using product token or providing product_id/key).
                     If a license key format (XXXX-XXXX-XXXX-XXXX) is passed, it will be treated as a key.
             product_id: Product UUID or slug (optional, alternative to product parameter)
             key: License key to determine product (optional, alternative to product/product_id)
+            **kwargs: Can also pass device information (domain, hostname, machine_id, hwid, ip, mac_address)
+                     or other parameters as keyword arguments
 
         Returns:
             Response containing current version and update information
@@ -522,51 +525,89 @@ class Client:
 
         Note:
             When using a product token, you can call without any parameters to get updates
-            for the product associated with the token. Alternatively, provide product_id
-            or license key to get updates for a specific product.
+            for the product associated with the token. Alternatively, provide product_id,
+            license key, or device information to get updates for a specific product.
+            
+            If device information is provided (and no product/key is specified), the method
+            will first get license info to determine the product, then fetch updates.
         """
-        params = {}
+        # Normalize data to support both dict and kwargs
+        params = self._normalize_data(data, **kwargs)
         
-        # If product looks like a license key (format: XXXX-XXXX-XXXX-XXXX), treat it as a key
-        if product and self._looks_like_license_key(product):
-            key = product
-            product = None
+        # Handle legacy positional arguments
+        if product:
+            # If product looks like a license key (format: XXXX-XXXX-XXXX-XXXX), treat it as a key
+            if isinstance(product, str) and self._looks_like_license_key(product):
+                params['key'] = product
+            else:
+                params['product'] = product
         
         if product_id:
             params['product_id'] = product_id
         if key:
             params['key'] = key
         
-        if product:
-            return self._get(f"/api/products/{product}/updates", params)
+        # Check if device info is provided but no product/key
+        device_fields = ['domain', 'hostname', 'machine_id', 'hwid', 'ip', 'mac_address']
+        has_device_info = any(field in params for field in device_fields)
+        has_product_or_key = 'product' in params or 'product_id' in params or 'key' in params
+        
+        # If device info is provided but no product/key, get license info first to determine product
+        if has_device_info and not has_product_or_key:
+            try:
+                license_info = self.get_license_info(params.copy())
+                license_data = license_info.get('license', {})
+                product_data = license_data.get('product', {})
+                if product_data and 'id' in product_data:
+                    params['product_id'] = product_data['id']
+            except ApiException:
+                # If we can't get license info, just pass device info and let API handle it
+                pass
+        
+        # Extract product for URL path if provided
+        url_product = params.pop('product', None)
+        
+        # If product looks like a license key, treat it as a key instead
+        if url_product and isinstance(url_product, str) and self._looks_like_license_key(url_product):
+            params['key'] = url_product
+            url_product = None
+        
+        if url_product:
+            return self._get(f"/api/products/{url_product}/updates", params)
         else:
             return self._get("/api/products/updates", params)
     
-    def _looks_like_license_key(self, value: str) -> bool:
+    def _looks_like_license_key(self, value: Any) -> bool:
         """
-        Check if a string looks like a license key format (XXXX-XXXX-XXXX-XXXX).
+        Check if a value looks like a license key format (XXXX-XXXX-XXXX-XXXX).
         
         Args:
-            value: String to check
+            value: Value to check (must be a string)
             
         Returns:
-            True if it looks like a license key format
+            True if it looks like a license key format, False otherwise
         """
         import re
+        # Only check strings
+        if not isinstance(value, str):
+            return False
         # License key format: 4 groups of 4 alphanumeric characters separated by hyphens
         pattern = r'^[A-Z0-9]{4}-[A-Z0-9]{4}-[A-Z0-9]{4}-[A-Z0-9]{4}$'
         return bool(re.match(pattern, value.upper()))
 
-    def get_product_changelog(self, product: str = None, product_id: str = None, key: str = None) -> Dict[str, Any]:
+    def get_product_changelog(self, data: Optional[Dict[str, Any]] = None, product: str = None, product_id: str = None, key: str = None, **kwargs) -> Dict[str, Any]:
         """
         Get product changelog with all versions.
         Requires Client Token or Admin Token.
 
         Args:
+            data: Optional dictionary of data, or use keyword arguments
             product: Product UUID or slug (optional if using product token or providing product_id/key).
                     If a license key format (XXXX-XXXX-XXXX-XXXX) is passed, it will be treated as a key.
             product_id: Product UUID or slug (optional, alternative to product parameter)
             key: License key to determine product (optional, alternative to product/product_id)
+            **kwargs: Can also pass device information (domain, hostname, machine_id, hwid, ip, mac_address)
+                     or other parameters as keyword arguments
 
         Returns:
             Response containing product changelog
@@ -576,23 +617,55 @@ class Client:
 
         Note:
             When using a product token, you can call without any parameters to get changelog
-            for the product associated with the token. Alternatively, provide product_id
-            or license key to get changelog for a specific product.
+            for the product associated with the token. Alternatively, provide product_id,
+            license key, or device information to get changelog for a specific product.
+            
+            If device information is provided (and no product/key is specified), the method
+            will first get license info to determine the product, then fetch changelog.
         """
-        params = {}
+        # Normalize data to support both dict and kwargs
+        params = self._normalize_data(data, **kwargs)
         
-        # If product looks like a license key (format: XXXX-XXXX-XXXX-XXXX), treat it as a key
-        if product and self._looks_like_license_key(product):
-            key = product
-            product = None
+        # Handle legacy positional arguments
+        if product:
+            # If product looks like a license key (format: XXXX-XXXX-XXXX-XXXX), treat it as a key
+            if isinstance(product, str) and self._looks_like_license_key(product):
+                params['key'] = product
+            else:
+                params['product'] = product
         
         if product_id:
             params['product_id'] = product_id
         if key:
             params['key'] = key
         
-        if product:
-            return self._get(f"/api/products/{product}/changelog", params)
+        # Check if device info is provided but no product/key
+        device_fields = ['domain', 'hostname', 'machine_id', 'hwid', 'ip', 'mac_address']
+        has_device_info = any(field in params for field in device_fields)
+        has_product_or_key = 'product' in params or 'product_id' in params or 'key' in params
+        
+        # If device info is provided but no product/key, get license info first to determine product
+        if has_device_info and not has_product_or_key:
+            try:
+                license_info = self.get_license_info(params.copy())
+                license_data = license_info.get('license', {})
+                product_data = license_data.get('product', {})
+                if product_data and 'id' in product_data:
+                    params['product_id'] = product_data['id']
+            except ApiException:
+                # If we can't get license info, just pass device info and let API handle it
+                pass
+        
+        # Extract product for URL path if provided
+        url_product = params.pop('product', None)
+        
+        # If product looks like a license key, treat it as a key instead
+        if url_product and isinstance(url_product, str) and self._looks_like_license_key(url_product):
+            params['key'] = url_product
+            url_product = None
+        
+        if url_product:
+            return self._get(f"/api/products/{url_product}/changelog", params)
         else:
             return self._get("/api/products/changelog", params)
 
